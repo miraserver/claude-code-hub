@@ -64,7 +64,7 @@
     "pino-pretty": "^13",
     "postgres": "^3",
     "react": "^19",
-    "react-day-picker": "^9",
+    "react-day-picker": "^9.12.0",
     "react-dom": "^19",
     "react-hook-form": "^7",
     "recharts": "^3",
