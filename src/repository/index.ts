@@ -15,6 +15,7 @@ export {
   findKeyById,
   findKeyList,
   findKeyListBatch,
+  findKeyStatisticsById,
   findKeysWithStatisticsBatch,
   findKeyUsageToday,
   findKeyUsageTodayBatch,

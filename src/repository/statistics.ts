@@ -732,6 +732,114 @@ export async function sumUserCostToday(userId: number): Promise<number> {
 }
 
 /**
+ * 查询用户今日总消费（使用服务器本地时间）
+ * 与 findKeyUsageTodayBatch 保持一致的时间逻辑
+ */
+export async function sumUserCostTodayLocal(userId: number): Promise<number> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const result = await db
+    .select({ total: sql<number>`COALESCE(SUM(${messageRequest.costUsd}), 0)` })
+    .from(messageRequest)
+    .innerJoin(keys, eq(messageRequest.key, keys.key))
+    .where(
+      and(
+        eq(keys.userId, userId),
+        gte(messageRequest.createdAt, today),
+        lt(messageRequest.createdAt, tomorrow),
+        isNull(messageRequest.deletedAt),
+        isNull(keys.deletedAt)
+      )
+    );
+
+  return Number(result[0]?.total || 0);
+}
+
+/**
+ * 查询用户本周总消费（服务器本地时间，周一为起始）
+ */
+export async function sumUserCostThisWeek(userId: number): Promise<number> {
+  const now = new Date();
+  const dayOfWeek = now.getDay();
+  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - daysToMonday);
+  monday.setHours(0, 0, 0, 0);
+
+  const result = await db
+    .select({ total: sql<number>`COALESCE(SUM(${messageRequest.costUsd}), 0)` })
+    .from(messageRequest)
+    .innerJoin(keys, eq(messageRequest.key, keys.key))
+    .where(
+      and(
+        eq(keys.userId, userId),
+        gte(messageRequest.createdAt, monday),
+        isNull(messageRequest.deletedAt),
+        isNull(keys.deletedAt)
+      )
+    );
+
+  return Number(result[0]?.total || 0);
+}
+
+/**
+ * 查询用户过去5小时总消费
+ */
+export async function sumUserCost5h(userId: number): Promise<number> {
+  const fiveHoursAgo = new Date(Date.now() - 5 * 60 * 60 * 1000);
+
+  const result = await db
+    .select({ total: sql<number>`COALESCE(SUM(${messageRequest.costUsd}), 0)` })
+    .from(messageRequest)
+    .innerJoin(keys, eq(messageRequest.key, keys.key))
+    .where(
+      and(
+        eq(keys.userId, userId),
+        gte(messageRequest.createdAt, fiveHoursAgo),
+        isNull(messageRequest.deletedAt),
+        isNull(keys.deletedAt)
+      )
+    );
+
+  return Number(result[0]?.total || 0);
+}
+
+/**
+ * 查询 Key 今日消费（使用服务器本地时间）
+ */
+export async function sumKeyCostTodayById(keyId: number): Promise<number> {
+  const keyRecord = await db
+    .select({ key: keys.key })
+    .from(keys)
+    .where(eq(keys.id, keyId))
+    .limit(1);
+
+  if (!keyRecord || keyRecord.length === 0) return 0;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const result = await db
+    .select({ total: sql<number>`COALESCE(SUM(${messageRequest.costUsd}), 0)` })
+    .from(messageRequest)
+    .where(
+      and(
+        eq(messageRequest.key, keyRecord[0].key),
+        gte(messageRequest.createdAt, today),
+        lt(messageRequest.createdAt, tomorrow),
+        isNull(messageRequest.deletedAt)
+      )
+    );
+
+  return Number(result[0]?.total || 0);
+}
+
+/**
  * 查询 Key 历史总消费（通过 Key ID）
  * 用于显示 Key 的历史总消费统计
  * @param keyId - Key 的数据库 ID
@@ -859,6 +967,30 @@ export async function sumKeyCostInTimeRange(
     .where(
       and(
         eq(messageRequest.key, keyString), // 使用 key 字符串而非 ID
+        gte(messageRequest.createdAt, startTime),
+        lt(messageRequest.createdAt, endTime),
+        isNull(messageRequest.deletedAt)
+      )
+    );
+
+  return Number(result[0]?.total || 0);
+}
+
+/**
+ * 查询 User 在指定时间范围内的消费总和
+ * 用于 User 层限额检查（Redis 降级）
+ */
+export async function sumUserCostInTimeRange(
+  userId: number,
+  startTime: Date,
+  endTime: Date
+): Promise<number> {
+  const result = await db
+    .select({ total: sql<number>`COALESCE(SUM(${messageRequest.costUsd}), 0)` })
+    .from(messageRequest)
+    .where(
+      and(
+        eq(messageRequest.userId, userId),
         gte(messageRequest.createdAt, startTime),
         lt(messageRequest.createdAt, endTime),
         isNull(messageRequest.deletedAt)

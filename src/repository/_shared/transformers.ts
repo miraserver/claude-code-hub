@@ -16,12 +16,25 @@ export function toUser(dbUser: any): User {
     dailyQuota: dbUser?.dailyQuota ? parseFloat(dbUser.dailyQuota) : 0,
     providerGroup: dbUser?.providerGroup ?? null,
     tags: dbUser?.tags ?? [],
+    limit5hUsd:
+      dbUser?.limit5hUsd !== null && dbUser?.limit5hUsd !== undefined
+        ? parseFloat(dbUser.limit5hUsd)
+        : null,
+    limitWeeklyUsd:
+      dbUser?.limitWeeklyUsd !== null && dbUser?.limitWeeklyUsd !== undefined
+        ? parseFloat(dbUser.limitWeeklyUsd)
+        : null,
+    limitMonthlyUsd:
+      dbUser?.limitMonthlyUsd !== null && dbUser?.limitMonthlyUsd !== undefined
+        ? parseFloat(dbUser.limitMonthlyUsd)
+        : null,
     limitTotalUsd:
       dbUser?.limitTotalUsd !== null && dbUser?.limitTotalUsd !== undefined
         ? parseFloat(dbUser.limitTotalUsd)
         : null,
     dailyResetMode: dbUser?.dailyResetMode ?? "fixed",
     dailyResetTime: dbUser?.dailyResetTime ?? "00:00",
+    limitConcurrentSessions: dbUser?.limitConcurrentSessions ?? null,
     isEnabled: dbUser?.isEnabled ?? true,
     expiresAt: dbUser?.expiresAt ? new Date(dbUser.expiresAt) : null,
     allowedClients: dbUser?.allowedClients ?? [],

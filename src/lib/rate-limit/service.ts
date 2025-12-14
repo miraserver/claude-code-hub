@@ -659,7 +659,7 @@ export class RateLimitService {
    */
   static async getCurrentCost(
     id: number,
-    type: "key" | "provider",
+    type: "key" | "provider" | "user",
     period: "5h" | "daily" | "weekly" | "monthly",
     resetTime = "00:00",
     resetMode: DailyResetMode = "fixed"
@@ -749,7 +749,7 @@ export class RateLimitService {
       }
 
       // Slow Path: 数据库查询
-      const { sumKeyCostInTimeRange, sumProviderCostInTimeRange } = await import(
+      const { sumKeyCostInTimeRange, sumProviderCostInTimeRange, sumUserCostInTimeRange } = await import(
         "@/repository/statistics"
       );
 
@@ -758,17 +758,13 @@ export class RateLimitService {
         dailyResetInfo.normalized,
         resetMode
       );
-
       let current: number;
-      switch (type) {
-        case "key":
-          current = await sumKeyCostInTimeRange(id, startTime, endTime);
-          break;
-        case "provider":
-          current = await sumProviderCostInTimeRange(id, startTime, endTime);
-          break;
-        default:
-          current = 0;
+      if (type === "key") {
+        current = await sumKeyCostInTimeRange(id, startTime, endTime);
+      } else if (type === "user") {
+        current = await sumUserCostInTimeRange(id, startTime, endTime);
+      } else {
+        current = await sumProviderCostInTimeRange(id, startTime, endTime);
       }
 
       // Cache Warming: 写回 Redis
