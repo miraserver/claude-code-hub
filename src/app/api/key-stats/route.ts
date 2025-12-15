@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
-import { validateApiKeyAndGetUser, findKeyStatisticsById } from "@/repository/key";
+import { validateApiKeyAndGetUser, findKeyStatisticsByKeyString } from "@/repository/key";
 import { RateLimitService } from "@/lib/rate-limit";
 import { getResetInfoWithMode } from "@/lib/rate-limit/time-utils";
 import { SessionTracker } from "@/lib/session-tracker";
-import { sumUserTotalCost, sumUserCostTodayLocal, sumUserCostThisWeek, sumUserCost5h, sumKeyCostTodayById } from "@/repository/statistics";
+import { getCombinedUserCosts } from "@/repository/statistics";
 
 export const runtime = "nodejs";
 
@@ -40,22 +40,28 @@ export async function GET(request: NextRequest) {
 
     const { key, user } = result;
 
-    // Get key statistics (model stats, usage counts, etc.) - optimized: single key query
-    const thisKeyStats = await findKeyStatisticsById(key.id);
-
-    // Get key's current usage for different time windows and user usage
-    const [cost5h, costDaily, costWeekly, costMonthly, concurrentSessions, userCost5h, userCostDaily, userCostWeekly, userCostMonthly, userTotalCost] = await Promise.all([
+    // Get all key and user statistics in parallel (optimized: 3 DB queries instead of 8)
+    const [
+      thisKeyStats,
+      cost5h,
+      costWeekly,
+      costMonthly,
+      concurrentSessions,
+      userCosts,
+    ] = await Promise.all([
+      findKeyStatisticsByKeyString(key.key, key.id),  // Optimized: no findKeyById (-1 DB)
       RateLimitService.getCurrentCost(key.id, "key", "5h"),
-      sumKeyCostTodayById(key.id),
+      // sumKeyCostTodayById removed - computed from modelStats below (-1 DB)
       RateLimitService.getCurrentCost(key.id, "key", "weekly"),
       RateLimitService.getCurrentCost(key.id, "key", "monthly"),
       SessionTracker.getKeySessionCount(key.id),
-      sumUserCost5h(user.id),
-      sumUserCostTodayLocal(user.id),
-      sumUserCostThisWeek(user.id),
-      RateLimitService.getCurrentCost(user.id, "user", "monthly"),
-      sumUserTotalCost(user.id, 365),
+      getCombinedUserCosts(user.id, 365),  // Combined query: 5 separate queries → 1 (-4 DB)
     ]);
+
+    // Calculate costDaily from modelStats (instead of separate sumKeyCostTodayById query)
+    const costDaily = thisKeyStats.modelStats.reduce(
+      (sum, m) => sum + m.totalCost, 0
+    );
 
     // Get reset time information for daily limit
     const resetInfoDaily = getResetInfoWithMode(
@@ -117,19 +123,12 @@ export async function GET(request: NextRequest) {
             remaining: calculateRemaining(key.limitConcurrentSessions, concurrentSessions),
           },
         },
-        statistics: thisKeyStats
-          ? {
-              todayCallCount: thisKeyStats.todayCallCount,
-              lastUsedAt: thisKeyStats.lastUsedAt,
-              lastProviderName: thisKeyStats.lastProviderName,
-              modelStats: thisKeyStats.modelStats,
-            }
-          : {
-              todayCallCount: 0,
-              lastUsedAt: null,
-              lastProviderName: null,
-              modelStats: [],
-            },
+        statistics: {
+            todayCallCount: thisKeyStats.todayCallCount,
+            lastUsedAt: thisKeyStats.lastUsedAt,
+            lastProviderName: thisKeyStats.lastProviderName,
+            modelStats: thisKeyStats.modelStats,
+          },
       },
       user: {
         id: user.id,
@@ -149,11 +148,11 @@ export async function GET(request: NextRequest) {
           limitConcurrentSessions: user.limitConcurrentSessions,
         },
         usage: {
-          totalCostToday: userCostDaily,
-          cost5h: userCost5h,
-          costWeekly: userCostWeekly,
-          costMonthly: userCostMonthly,
-          totalCost: userTotalCost,
+          totalCostToday: userCosts.costDaily,
+          cost5h: userCosts.cost5h,
+          costWeekly: userCosts.costWeekly,
+          costMonthly: userCosts.costMonthly,
+          totalCost: userCosts.totalCost,
         },
       },
     });

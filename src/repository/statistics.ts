@@ -809,16 +809,9 @@ export async function sumUserCost5h(userId: number): Promise<number> {
 
 /**
  * 查询 Key 今日消费（使用服务器本地时间）
+ * 优化：使用 JOIN 代替两次查询
  */
 export async function sumKeyCostTodayById(keyId: number): Promise<number> {
-  const keyRecord = await db
-    .select({ key: keys.key })
-    .from(keys)
-    .where(eq(keys.id, keyId))
-    .limit(1);
-
-  if (!keyRecord || keyRecord.length === 0) return 0;
-
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
@@ -827,9 +820,10 @@ export async function sumKeyCostTodayById(keyId: number): Promise<number> {
   const result = await db
     .select({ total: sql<number>`COALESCE(SUM(${messageRequest.costUsd}), 0)` })
     .from(messageRequest)
+    .innerJoin(keys, eq(messageRequest.key, keys.key))
     .where(
       and(
-        eq(messageRequest.key, keyRecord[0].key),
+        eq(keys.id, keyId),
         gte(messageRequest.createdAt, today),
         lt(messageRequest.createdAt, tomorrow),
         isNull(messageRequest.deletedAt)
@@ -918,27 +912,106 @@ export async function sumUserTotalCost(userId: number, maxAgeDays: number = 365)
 }
 
 /**
- * 查询用户在指定时间范围内的消费总和
- * 用于用户层限额百分比显示
+ * 查询用户多时间段消费（优化：并行查询）
+ * 返回 5h/daily/weekly/monthly/total 消费
+ * 用于 /api/key-stats 端点减少代码复杂度
  */
-export async function sumUserCostInTimeRange(
+export async function getCombinedUserCosts(
   userId: number,
-  startTime: Date,
-  endTime: Date
-): Promise<number> {
-  const result = await db
-    .select({ total: sql<number>`COALESCE(SUM(${messageRequest.costUsd}), 0)` })
-    .from(messageRequest)
-    .where(
-      and(
-        eq(messageRequest.userId, userId),
-        gte(messageRequest.createdAt, startTime),
-        lt(messageRequest.createdAt, endTime),
-        isNull(messageRequest.deletedAt)
-      )
-    );
+  maxAgeDays: number = 365
+): Promise<{
+  cost5h: number;
+  costDaily: number;
+  costWeekly: number;
+  costMonthly: number;
+  totalCost: number;
+}> {
+  // 计算时间边界（服务器本地时间）
+  const now = new Date();
 
-  return Number(result[0]?.total || 0);
+  // 5h
+  const fiveHoursAgo = new Date(now.getTime() - 5 * 60 * 60 * 1000);
+
+  // Daily: 今天 00:00:00
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+
+  // Weekly: 本周一 00:00:00
+  const dayOfWeek = now.getDay();
+  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - daysToMonday);
+  monday.setHours(0, 0, 0, 0);
+
+  // Monthly: 本月 1 号 00:00:00
+  const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  // Total: maxAgeDays 前
+  const cutoffDate = new Date(now);
+  cutoffDate.setDate(cutoffDate.getDate() - maxAgeDays);
+
+  // 并行执行 5 个查询（优化：共享 WHERE 条件，减少代码重复）
+  const [cost5hResult, costDailyResult, costWeeklyResult, costMonthlyResult, totalCostResult] =
+    await Promise.all([
+      db
+        .select({ total: sql<number>`COALESCE(SUM(${messageRequest.costUsd}), 0)` })
+        .from(messageRequest)
+        .where(
+          and(
+            eq(messageRequest.userId, userId),
+            isNull(messageRequest.deletedAt),
+            gte(messageRequest.createdAt, fiveHoursAgo)
+          )
+        ),
+      db
+        .select({ total: sql<number>`COALESCE(SUM(${messageRequest.costUsd}), 0)` })
+        .from(messageRequest)
+        .where(
+          and(
+            eq(messageRequest.userId, userId),
+            isNull(messageRequest.deletedAt),
+            gte(messageRequest.createdAt, today)
+          )
+        ),
+      db
+        .select({ total: sql<number>`COALESCE(SUM(${messageRequest.costUsd}), 0)` })
+        .from(messageRequest)
+        .where(
+          and(
+            eq(messageRequest.userId, userId),
+            isNull(messageRequest.deletedAt),
+            gte(messageRequest.createdAt, monday)
+          )
+        ),
+      db
+        .select({ total: sql<number>`COALESCE(SUM(${messageRequest.costUsd}), 0)` })
+        .from(messageRequest)
+        .where(
+          and(
+            eq(messageRequest.userId, userId),
+            isNull(messageRequest.deletedAt),
+            gte(messageRequest.createdAt, firstDayOfMonth)
+          )
+        ),
+      db
+        .select({ total: sql<number>`COALESCE(SUM(${messageRequest.costUsd}), 0)` })
+        .from(messageRequest)
+        .where(
+          and(
+            eq(messageRequest.userId, userId),
+            isNull(messageRequest.deletedAt),
+            gte(messageRequest.createdAt, cutoffDate)
+          )
+        ),
+    ]);
+
+  return {
+    cost5h: Number(cost5hResult[0]?.total || 0),
+    costDaily: Number(costDailyResult[0]?.total || 0),
+    costWeekly: Number(costWeeklyResult[0]?.total || 0),
+    costMonthly: Number(costMonthlyResult[0]?.total || 0),
+    totalCost: Number(totalCostResult[0]?.total || 0),
+  };
 }
 
 /**

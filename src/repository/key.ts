@@ -631,6 +631,7 @@ export async function findKeysWithStatistics(userId: number): Promise<KeyStatist
 
 /**
  * 获取单个密钥的统计信息（优化版 - 避免加载所有密钥）
+ * 优化：3个查询并行执行
  */
 export async function findKeyStatisticsById(keyId: number): Promise<KeyStatistics | null> {
   const key = await findKeyById(keyId);
@@ -643,50 +644,54 @@ export async function findKeyStatisticsById(keyId: number): Promise<KeyStatistic
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  // 查询今日调用次数
-  const [todayCount] = await db
-    .select({ count: count() })
-    .from(messageRequest)
-    .where(
-      and(
-        eq(messageRequest.key, key.key),
-        isNull(messageRequest.deletedAt),
-        gte(messageRequest.createdAt, today),
-        lt(messageRequest.createdAt, tomorrow)
+  // 并行执行3个查询
+  const [todayCountResult, lastUsageResult, modelStatsRows] = await Promise.all([
+    // 查询今日调用次数
+    db
+      .select({ count: count() })
+      .from(messageRequest)
+      .where(
+        and(
+          eq(messageRequest.key, key.key),
+          isNull(messageRequest.deletedAt),
+          gte(messageRequest.createdAt, today),
+          lt(messageRequest.createdAt, tomorrow)
+        )
+      ),
+    // 查询最后使用时间和供应商
+    db
+      .select({
+        createdAt: messageRequest.createdAt,
+        providerName: providers.name,
+      })
+      .from(messageRequest)
+      .innerJoin(providers, eq(messageRequest.providerId, providers.id))
+      .where(and(eq(messageRequest.key, key.key), isNull(messageRequest.deletedAt)))
+      .orderBy(desc(messageRequest.createdAt))
+      .limit(1),
+    // 查询分模型统计（仅统计当天）
+    db
+      .select({
+        model: messageRequest.model,
+        callCount: sql<number>`count(*)::int`,
+        totalCost: sum(messageRequest.costUsd),
+      })
+      .from(messageRequest)
+      .where(
+        and(
+          eq(messageRequest.key, key.key),
+          isNull(messageRequest.deletedAt),
+          gte(messageRequest.createdAt, today),
+          lt(messageRequest.createdAt, tomorrow),
+          sql`${messageRequest.model} IS NOT NULL`
+        )
       )
-    );
+      .groupBy(messageRequest.model)
+      .orderBy(desc(sql`count(*)`)),
+  ]);
 
-  // 查询最后使用时间和供应商
-  const [lastUsage] = await db
-    .select({
-      createdAt: messageRequest.createdAt,
-      providerName: providers.name,
-    })
-    .from(messageRequest)
-    .innerJoin(providers, eq(messageRequest.providerId, providers.id))
-    .where(and(eq(messageRequest.key, key.key), isNull(messageRequest.deletedAt)))
-    .orderBy(desc(messageRequest.createdAt))
-    .limit(1);
-
-  // 查询分模型统计（仅统计当天）
-  const modelStatsRows = await db
-    .select({
-      model: messageRequest.model,
-      callCount: sql<number>`count(*)::int`,
-      totalCost: sum(messageRequest.costUsd),
-    })
-    .from(messageRequest)
-    .where(
-      and(
-        eq(messageRequest.key, key.key),
-        isNull(messageRequest.deletedAt),
-        gte(messageRequest.createdAt, today),
-        lt(messageRequest.createdAt, tomorrow),
-        sql`${messageRequest.model} IS NOT NULL`
-      )
-    )
-    .groupBy(messageRequest.model)
-    .orderBy(desc(sql`count(*)`));
+  const todayCount = todayCountResult[0];
+  const lastUsage = lastUsageResult[0];
 
   const modelStats = modelStatsRows.map((row) => ({
     model: row.model || "unknown",
@@ -699,6 +704,87 @@ export async function findKeyStatisticsById(keyId: number): Promise<KeyStatistic
 
   return {
     keyId: key.id,
+    todayCallCount: Number(todayCount?.count || 0),
+    lastUsedAt: lastUsage?.createdAt || null,
+    lastProviderName: lastUsage?.providerName || null,
+    modelStats,
+  };
+}
+
+/**
+ * 获取单个密钥的统计信息（最优版 - 直接传入 keyString，避免额外查询）
+ * 优化：比 findKeyStatisticsById 少 1 次 findKeyById 查询
+ * 适用于已有 key 对象的场景（如 validateApiKeyAndGetUser 后）
+ */
+export async function findKeyStatisticsByKeyString(
+  keyString: string,
+  keyId: number
+): Promise<KeyStatistics> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  // 并行执行3个查询
+  const [todayCountResult, lastUsageResult, modelStatsRows] = await Promise.all([
+    // 查询今日调用次数
+    db
+      .select({ count: count() })
+      .from(messageRequest)
+      .where(
+        and(
+          eq(messageRequest.key, keyString),
+          isNull(messageRequest.deletedAt),
+          gte(messageRequest.createdAt, today),
+          lt(messageRequest.createdAt, tomorrow)
+        )
+      ),
+    // 查询最后使用时间和供应商
+    db
+      .select({
+        createdAt: messageRequest.createdAt,
+        providerName: providers.name,
+      })
+      .from(messageRequest)
+      .innerJoin(providers, eq(messageRequest.providerId, providers.id))
+      .where(and(eq(messageRequest.key, keyString), isNull(messageRequest.deletedAt)))
+      .orderBy(desc(messageRequest.createdAt))
+      .limit(1),
+    // 查询分模型统计（仅统计当天）
+    db
+      .select({
+        model: messageRequest.model,
+        callCount: sql<number>`count(*)::int`,
+        totalCost: sum(messageRequest.costUsd),
+      })
+      .from(messageRequest)
+      .where(
+        and(
+          eq(messageRequest.key, keyString),
+          isNull(messageRequest.deletedAt),
+          gte(messageRequest.createdAt, today),
+          lt(messageRequest.createdAt, tomorrow),
+          sql`${messageRequest.model} IS NOT NULL`
+        )
+      )
+      .groupBy(messageRequest.model)
+      .orderBy(desc(sql`count(*)`)),
+  ]);
+
+  const todayCount = todayCountResult[0];
+  const lastUsage = lastUsageResult[0];
+
+  const modelStats = modelStatsRows.map((row) => ({
+    model: row.model || "unknown",
+    callCount: row.callCount,
+    totalCost: (() => {
+      const costDecimal = toCostDecimal(row.totalCost) ?? new Decimal(0);
+      return costDecimal.toDecimalPlaces(6).toNumber();
+    })(),
+  }));
+
+  return {
+    keyId,
     todayCallCount: Number(todayCount?.count || 0),
     lastUsedAt: lastUsage?.createdAt || null,
     lastProviderName: lastUsage?.providerName || null,
