@@ -550,6 +550,14 @@ export interface KeyStatistics {
     callCount: number;
     totalCost: number;
   }>;
+  tokenUsage: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheCreationInputTokens: number;
+    cacheReadInputTokens: number;
+    cacheCreation5mInputTokens: number;
+    cacheCreation1hInputTokens: number;
+  };
 }
 
 export async function findKeysWithStatistics(userId: number): Promise<KeyStatistics[]> {
@@ -725,8 +733,8 @@ export async function findKeyStatisticsByKeyString(
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  // 并行执行3个查询
-  const [todayCountResult, lastUsageResult, modelStatsRows] = await Promise.all([
+  // 并行执行4个查询
+  const [todayCountResult, lastUsageResult, modelStatsRows, tokenUsageResult] = await Promise.all([
     // 查询今日调用次数
     db
       .select({ count: count() })
@@ -769,6 +777,25 @@ export async function findKeyStatisticsByKeyString(
       )
       .groupBy(messageRequest.model)
       .orderBy(desc(sql`count(*)`)),
+    // 查询今日 token 使用统计
+    db
+      .select({
+        inputTokens: sql<number>`COALESCE(SUM(${messageRequest.inputTokens}), 0)::int`,
+        outputTokens: sql<number>`COALESCE(SUM(${messageRequest.outputTokens}), 0)::int`,
+        cacheCreationInputTokens: sql<number>`COALESCE(SUM(${messageRequest.cacheCreationInputTokens}), 0)::int`,
+        cacheReadInputTokens: sql<number>`COALESCE(SUM(${messageRequest.cacheReadInputTokens}), 0)::int`,
+        cacheCreation5mInputTokens: sql<number>`COALESCE(SUM(${messageRequest.cacheCreation5mInputTokens}), 0)::int`,
+        cacheCreation1hInputTokens: sql<number>`COALESCE(SUM(${messageRequest.cacheCreation1hInputTokens}), 0)::int`,
+      })
+      .from(messageRequest)
+      .where(
+        and(
+          eq(messageRequest.key, keyString),
+          isNull(messageRequest.deletedAt),
+          gte(messageRequest.createdAt, today),
+          lt(messageRequest.createdAt, tomorrow)
+        )
+      ),
   ]);
 
   const todayCount = todayCountResult[0];
@@ -783,12 +810,22 @@ export async function findKeyStatisticsByKeyString(
     })(),
   }));
 
+  const tokenUsage = tokenUsageResult[0];
+
   return {
     keyId,
     todayCallCount: Number(todayCount?.count || 0),
     lastUsedAt: lastUsage?.createdAt || null,
     lastProviderName: lastUsage?.providerName || null,
     modelStats,
+    tokenUsage: {
+      inputTokens: tokenUsage?.inputTokens ?? 0,
+      outputTokens: tokenUsage?.outputTokens ?? 0,
+      cacheCreationInputTokens: tokenUsage?.cacheCreationInputTokens ?? 0,
+      cacheReadInputTokens: tokenUsage?.cacheReadInputTokens ?? 0,
+      cacheCreation5mInputTokens: tokenUsage?.cacheCreation5mInputTokens ?? 0,
+      cacheCreation1hInputTokens: tokenUsage?.cacheCreation1hInputTokens ?? 0,
+    },
   };
 }
 

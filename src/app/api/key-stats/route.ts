@@ -128,6 +128,7 @@ export async function GET(request: NextRequest) {
             lastUsedAt: thisKeyStats.lastUsedAt,
             lastProviderName: thisKeyStats.lastProviderName,
             modelStats: thisKeyStats.modelStats,
+            tokenUsage: thisKeyStats.tokenUsage,
           },
       },
       user: {
