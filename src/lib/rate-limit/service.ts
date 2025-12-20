@@ -749,9 +749,8 @@ export class RateLimitService {
       }
 
       // Slow Path: 数据库查询
-      const { sumKeyCostInTimeRange, sumProviderCostInTimeRange, sumUserCostInTimeRange } = await import(
-        "@/repository/statistics"
-      );
+      const { sumKeyCostInTimeRange, sumProviderCostInTimeRange, sumUserCostInTimeRange } =
+        await import("@/repository/statistics");
 
       const { startTime, endTime } = getTimeRangeForPeriodWithMode(
         period,

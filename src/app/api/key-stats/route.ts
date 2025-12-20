@@ -32,36 +32,25 @@ export async function GET(request: NextRequest) {
     // Validate key and get user in one query
     const result = await validateApiKeyAndGetUser(apiKey);
     if (!result) {
-      return NextResponse.json(
-        { error: "Invalid or expired API key" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Invalid or expired API key" }, { status: 401 });
     }
 
     const { key, user } = result;
 
     // Get all key and user statistics in parallel (optimized: 3 DB queries instead of 8)
-    const [
-      thisKeyStats,
-      cost5h,
-      costWeekly,
-      costMonthly,
-      concurrentSessions,
-      userCosts,
-    ] = await Promise.all([
-      findKeyStatisticsByKeyString(key.key, key.id),  // Optimized: no findKeyById (-1 DB)
-      RateLimitService.getCurrentCost(key.id, "key", "5h"),
-      // sumKeyCostTodayById removed - computed from modelStats below (-1 DB)
-      RateLimitService.getCurrentCost(key.id, "key", "weekly"),
-      RateLimitService.getCurrentCost(key.id, "key", "monthly"),
-      SessionTracker.getKeySessionCount(key.id),
-      getCombinedUserCosts(user.id, 365),  // Combined query: 5 separate queries → 1 (-4 DB)
-    ]);
+    const [thisKeyStats, cost5h, costWeekly, costMonthly, concurrentSessions, userCosts] =
+      await Promise.all([
+        findKeyStatisticsByKeyString(key.key, key.id), // Optimized: no findKeyById (-1 DB)
+        RateLimitService.getCurrentCost(key.id, "key", "5h"),
+        // sumKeyCostTodayById removed - computed from modelStats below (-1 DB)
+        RateLimitService.getCurrentCost(key.id, "key", "weekly"),
+        RateLimitService.getCurrentCost(key.id, "key", "monthly"),
+        SessionTracker.getKeySessionCount(key.id),
+        getCombinedUserCosts(user.id, 365), // Combined query: 5 separate queries → 1 (-4 DB)
+      ]);
 
     // Calculate costDaily from modelStats (instead of separate sumKeyCostTodayById query)
-    const costDaily = thisKeyStats.modelStats.reduce(
-      (sum, m) => sum + m.totalCost, 0
-    );
+    const costDaily = thisKeyStats.modelStats.reduce((sum, m) => sum + m.totalCost, 0);
 
     // Get reset time information for daily limit
     const resetInfoDaily = getResetInfoWithMode(
@@ -124,12 +113,12 @@ export async function GET(request: NextRequest) {
           },
         },
         statistics: {
-            todayCallCount: thisKeyStats.todayCallCount,
-            lastUsedAt: thisKeyStats.lastUsedAt,
-            lastProviderName: thisKeyStats.lastProviderName,
-            modelStats: thisKeyStats.modelStats,
-            tokenUsage: thisKeyStats.tokenUsage,
-          },
+          todayCallCount: thisKeyStats.todayCallCount,
+          lastUsedAt: thisKeyStats.lastUsedAt,
+          lastProviderName: thisKeyStats.lastProviderName,
+          modelStats: thisKeyStats.modelStats,
+          tokenUsage: thisKeyStats.tokenUsage,
+        },
       },
       user: {
         id: user.id,
@@ -159,9 +148,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     logger.error("Key stats API error:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
