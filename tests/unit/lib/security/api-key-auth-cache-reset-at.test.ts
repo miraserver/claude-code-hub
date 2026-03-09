@@ -142,18 +142,10 @@ describe("api-key-auth-cache costResetAt handling", () => {
       const { getCachedUser } = await import("@/lib/security/api-key-auth-cache");
       const user = await getCachedUser(10);
 
-      // hydrateUserFromCache returns null because costResetAt != null but parseOptionalDate returns null
-      // BUT: the code path is: costResetAt is not null, parseOptionalDate returns null for invalid string
-      // Line 173-174: if (user.costResetAt != null && !costResetAt) return null;
-      // Actually, that condition doesn't exist -- let's check the actual behavior
-      // Looking at the code: parseOptionalDate("not-a-date") => parseRequiredDate("not-a-date")
-      // => new Date("not-a-date") => Invalid Date => return null
-      // Then costResetAt is null (from parseOptionalDate)
-      // The code does NOT have a null check for costResetAt like expiresAt/deletedAt
-      // So the user would still be returned with costResetAt: null
-      expect(user).not.toBeNull();
-      // Invalid date parsed to null (graceful degradation)
-      expect(user!.costResetAt).toBeNull();
+      // Invalid costResetAt invalidates cache entry (consistent with expiresAt/deletedAt checks)
+      expect(user).toBeNull();
+      // Verify cache entry was deleted after hydration failure
+      expect(redisMock.del).toHaveBeenCalledWith("api_key_auth:v1:user:10");
     });
   });
 

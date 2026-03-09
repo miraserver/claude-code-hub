@@ -7,6 +7,12 @@ vi.mock("@/lib/auth", () => ({
   getSession: getSessionMock,
 }));
 
+// Mock api-key-auth-cache
+const invalidateCachedUserMock = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/lib/security/api-key-auth-cache", () => ({
+  invalidateCachedUser: invalidateCachedUserMock,
+}));
+
 // Mock next-intl
 const getTranslationsMock = vi.fn(async () => (key: string) => key);
 vi.mock("next-intl/server", () => ({
@@ -43,11 +49,48 @@ vi.mock("@/repository/key", async (importOriginal) => {
 });
 
 // Mock drizzle db
-const dbDeleteWhereMock = vi.fn();
+const dbDeleteWhereMock = vi.fn().mockResolvedValue(undefined);
 const dbDeleteMock = vi.fn(() => ({ where: dbDeleteWhereMock }));
+const dbUpdateSetWhereMock = vi.fn().mockResolvedValue(undefined);
+const dbUpdateSetMock = vi.fn(() => ({ where: dbUpdateSetWhereMock }));
+const dbUpdateMock = vi.fn(() => ({ set: dbUpdateSetMock }));
+const dbQueryErrorRulesFindManyMock = vi.fn().mockResolvedValue([]);
+const dbInsertReturningMock = vi.fn().mockResolvedValue([]);
+const dbInsertOnConflictDoNothingMock = vi.fn(() => ({
+  returning: dbInsertReturningMock,
+}));
+const dbInsertValuesMock = vi.fn(() => ({
+  onConflictDoNothing: dbInsertOnConflictDoNothingMock,
+}));
+const dbInsertMock = vi.fn(() => ({ values: dbInsertValuesMock }));
+const chainable = () =>
+  new Proxy(vi.fn().mockResolvedValue(undefined), {
+    get: (_t, prop) => (prop === "then" ? undefined : chainable()),
+  });
+const dbTransactionMock = vi.fn(async (cb: (tx: any) => Promise<void>) => {
+  const tx = new Proxy({} as any, {
+    get: (_t, prop) => {
+      if (prop === "delete") return dbDeleteMock;
+      if (prop === "insert") return dbInsertMock;
+      if (prop === "query") {
+        return {
+          errorRules: {
+            findMany: dbQueryErrorRulesFindManyMock,
+          },
+        };
+      }
+      if (prop === "update") return dbUpdateMock;
+      return chainable();
+    },
+  });
+  return await cb(tx);
+});
 vi.mock("@/drizzle/db", () => ({
   db: {
     delete: dbDeleteMock,
+    insert: dbInsertMock,
+    transaction: dbTransactionMock,
+    update: dbUpdateMock,
   },
 }));
 
@@ -67,6 +110,11 @@ const redisPipelineMock = {
   exec: vi.fn(),
 };
 const redisMock = {
+  decr: vi.fn().mockResolvedValue(0),
+  del: vi.fn().mockResolvedValue(1),
+  expire: vi.fn().mockResolvedValue(1),
+  incr: vi.fn().mockResolvedValue(1),
+  once: vi.fn(),
   status: "ready",
   pipeline: vi.fn(() => redisPipelineMock),
 };
@@ -89,7 +137,8 @@ describe("resetUserAllStatistics", () => {
     redisPipelineMock.exec.mockResolvedValue([]);
     // DB delete returns resolved promise
     dbDeleteWhereMock.mockResolvedValue(undefined);
-    resetUserCostResetAtMock.mockResolvedValue(true);
+    dbUpdateSetWhereMock.mockResolvedValue(undefined);
+    invalidateCachedUserMock.mockResolvedValue(undefined);
   });
 
   test("should return PERMISSION_DENIED for non-admin user", async () => {

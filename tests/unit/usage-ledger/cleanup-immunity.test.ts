@@ -19,21 +19,23 @@ describe("usage_ledger cleanup immunity", () => {
     expect(removeUserMatch).not.toBeNull();
     const removeUserBody = removeUserMatch![0];
     expect(removeUserBody).not.toContain("db.delete(usageLedger)");
+    expect(removeUserBody).not.toContain("tx.delete(usageLedger)");
   });
 
-  it("resetUserAllStatistics deletes from both tables", () => {
+  it("resetUserAllStatistics deletes from both tables inside transaction", () => {
     const resetMatch = usersTs.match(/export async function resetUserAllStatistics[\s\S]*?^}/m);
     expect(resetMatch).not.toBeNull();
     const resetBody = resetMatch![0];
-    expect(resetBody).toContain("db.delete(messageRequest)");
-    expect(resetBody).toContain("db.delete(usageLedger)");
+    expect(resetBody).toContain("tx.delete(messageRequest)");
+    expect(resetBody).toContain("tx.delete(usageLedger)");
+    expect(resetBody).toContain("db.transaction");
   });
 
   it("resetUserAllStatistics is the only usageLedger delete path in users.ts", () => {
-    const allDeleteMatches = [...usersTs.matchAll(/db\.delete\(usageLedger\)/g)];
+    const allDeleteMatches = [...usersTs.matchAll(/\.delete\(usageLedger\)/g)];
     expect(allDeleteMatches).toHaveLength(1);
 
-    const deleteIndex = usersTs.indexOf("db.delete(usageLedger)");
+    const deleteIndex = usersTs.indexOf(".delete(usageLedger)");
     const precedingChunk = usersTs.slice(Math.max(0, deleteIndex - 2000), deleteIndex);
     expect(precedingChunk).toContain("resetUserAllStatistics");
   });

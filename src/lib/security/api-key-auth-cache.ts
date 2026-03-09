@@ -172,6 +172,7 @@ function hydrateUserFromCache(payload: CachedUserPayloadV1): User | null {
   const costResetAt = parseOptionalDate(user.costResetAt);
   if (user.expiresAt != null && !expiresAt) return null;
   if (user.deletedAt != null && !deletedAt) return null;
+  if (user.costResetAt != null && !costResetAt) return null;
 
   return {
     ...(payload.user as User),
