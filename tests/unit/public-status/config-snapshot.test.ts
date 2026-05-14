@@ -1,7 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
 import { importPublicStatusModule } from "../../helpers/public-status-test-helpers";
 
+const CONFIG_SNAPSHOT_TTL_SECONDS = 60 * 60 * 24 * 7;
+
+type RedisMock = {
+  set: ReturnType<typeof vi.fn>;
+  get?: ReturnType<typeof vi.fn>;
+  eval?: ReturnType<typeof vi.fn>;
+};
+
 interface ConfigSnapshotModule {
+  publishPublicStatusConfigSnapshot(input: {
+    reason: string;
+    snapshot?: unknown;
+    redis?: RedisMock | null;
+    setCurrentPointer?: boolean;
+  }): Promise<{ configVersion: string; key: string; written: boolean }>;
+  publishInternalPublicStatusConfigSnapshot(input: {
+    snapshot: { configVersion: string; [key: string]: unknown };
+    redis?: RedisMock | null;
+    setCurrentPointer?: boolean;
+  }): Promise<{ configVersion: string; key: string; written: boolean }>;
   buildPublicStatusConfigSnapshot(input: {
     configVersion: string;
     siteTitle: string;
@@ -150,5 +169,59 @@ describe("public-status config snapshot", () => {
       })
     ).resolves.toBe(false);
     expect(redis.set).not.toHaveBeenCalled();
+  });
+
+  it("publishPublicStatusConfigSnapshot sets versioned and current keys with 7-day TTL", async () => {
+    const mod = await importPublicStatusModule<ConfigSnapshotModule>(
+      "@/lib/public-status/config-snapshot"
+    );
+
+    const redis: RedisMock = { set: vi.fn().mockResolvedValue("OK") };
+    const snapshot = {
+      configVersion: "cfg-ttl-test",
+      generatedAt: new Date().toISOString(),
+      siteTitle: "Test",
+      siteDescription: "Test",
+      timeZone: null,
+      defaultIntervalMinutes: 5,
+      defaultRangeHours: 24,
+      groups: [],
+    };
+
+    await mod.publishPublicStatusConfigSnapshot({ reason: "test", snapshot, redis });
+
+    expect(redis.set).toHaveBeenCalledTimes(2);
+    for (const call of redis.set.mock.calls) {
+      expect(call[2]).toBe("EX");
+      expect(call[3]).toBe(CONFIG_SNAPSHOT_TTL_SECONDS);
+    }
+  });
+
+  it("publishInternalPublicStatusConfigSnapshot sets versioned and current keys with 7-day TTL", async () => {
+    const mod = await importPublicStatusModule<ConfigSnapshotModule>(
+      "@/lib/public-status/config-snapshot"
+    );
+
+    const redis: RedisMock = { set: vi.fn().mockResolvedValue("OK") };
+
+    await mod.publishInternalPublicStatusConfigSnapshot({
+      snapshot: {
+        configVersion: "cfg-internal-ttl",
+        generatedAt: new Date().toISOString(),
+        siteTitle: "Test",
+        siteDescription: "Test",
+        timeZone: null,
+        defaultIntervalMinutes: 5,
+        defaultRangeHours: 24,
+        groups: [],
+      },
+      redis,
+    });
+
+    expect(redis.set).toHaveBeenCalledTimes(2);
+    for (const call of redis.set.mock.calls) {
+      expect(call[2]).toBe("EX");
+      expect(call[3]).toBe(CONFIG_SNAPSHOT_TTL_SECONDS);
+    }
   });
 });

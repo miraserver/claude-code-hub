@@ -24,7 +24,7 @@ interface PublicStatusRebuildResult {
 const inFlightRebuilds = new Map<string, Promise<PublicStatusRebuildResult>>();
 const REBUILD_LOCK_TTL_MS = 60_000;
 const TEMP_PROJECTION_TTL_SECONDS = 300;
-const GENERATION_PROJECTION_TTL_SECONDS = 60 * 60 * 24 * 30;
+const GENERATION_PROJECTION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 interface RedisHintWriter {
   get?(key: string): Promise<string | null> | string | null;
@@ -193,10 +193,20 @@ async function publishPublicStatusProjection(input: {
     }
 
     if (shouldPromoteCurrentManifest(existingCurrentManifest, manifestRecord)) {
-      await input.redis.set(currentManifestKey, JSON.stringify(manifestRecord));
+      await setWithTtl(
+        input.redis,
+        currentManifestKey,
+        JSON.stringify(manifestRecord),
+        GENERATION_PROJECTION_TTL_SECONDS
+      );
     }
   } else {
-    await input.redis.set(currentManifestKey, JSON.stringify(manifestRecord));
+    await setWithTtl(
+      input.redis,
+      currentManifestKey,
+      JSON.stringify(manifestRecord),
+      GENERATION_PROJECTION_TTL_SECONDS
+    );
   }
   if (input.redis.del) {
     await input.redis.del(snapshotTempKey, seriesTempKey);

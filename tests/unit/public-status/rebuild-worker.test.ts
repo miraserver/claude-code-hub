@@ -470,7 +470,7 @@ describe("public-status rebuild worker", () => {
       snapshotKey,
       expect.any(String),
       "EX",
-      60 * 60 * 24 * 30
+      60 * 60 * 24 * 7
     );
   });
 

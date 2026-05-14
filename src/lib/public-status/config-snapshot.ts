@@ -68,9 +68,12 @@ interface BuildPublicStatusConfigSnapshotInput {
 
 interface RedisWriter {
   set(key: string, value: string): Promise<unknown> | unknown;
+  set(key: string, value: string, mode: "EX", seconds: number): Promise<unknown> | unknown;
   get?(key: string): Promise<string | null> | string | null;
   eval?(script: string, numKeys: number, ...args: string[]): Promise<unknown> | unknown;
 }
+
+const CONFIG_SNAPSHOT_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 interface RedisReader {
   get(key: string): Promise<string | null> | string | null;
@@ -205,11 +208,13 @@ export async function publishPublicStatusConfigSnapshot(input: {
   const redis = input.redis ?? getRedisClient({ allowWhenRateLimitDisabled: true });
 
   if (redis) {
-    await redis.set(key, JSON.stringify(snapshot));
+    await redis.set(key, JSON.stringify(snapshot), "EX", CONFIG_SNAPSHOT_TTL_SECONDS);
     if (input.setCurrentPointer !== false) {
       await redis.set(
         buildPublicStatusConfigSnapshotKey(),
-        JSON.stringify({ key, configVersion: snapshot.configVersion })
+        JSON.stringify({ key, configVersion: snapshot.configVersion }),
+        "EX",
+        CONFIG_SNAPSHOT_TTL_SECONDS
       );
     }
   }
@@ -242,11 +247,13 @@ export async function publishInternalPublicStatusConfigSnapshot(input: {
   const redis = input.redis ?? getRedisClient({ allowWhenRateLimitDisabled: true });
 
   if (redis) {
-    await redis.set(key, JSON.stringify(input.snapshot));
+    await redis.set(key, JSON.stringify(input.snapshot), "EX", CONFIG_SNAPSHOT_TTL_SECONDS);
     if (input.setCurrentPointer !== false) {
       await redis.set(
         buildPublicStatusInternalConfigSnapshotKey(),
-        JSON.stringify({ key, configVersion: input.snapshot.configVersion })
+        JSON.stringify({ key, configVersion: input.snapshot.configVersion }),
+        "EX",
+        CONFIG_SNAPSHOT_TTL_SECONDS
       );
     }
   }
@@ -272,12 +279,18 @@ export async function publishCurrentPublicStatusConfigPointers(input: {
     const luaScript = `
       local current = redis.call('GET', KEYS[1])
       if (not current) or current <= ARGV[1] then
-        redis.call('SET', KEYS[1], ARGV[1])
+        redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2]))
         return 1
       end
       return 0
     `;
-    const result = await redis.eval(luaScript, 1, pointerKey, input.configVersion);
+    const result = await redis.eval(
+      luaScript,
+      1,
+      pointerKey,
+      input.configVersion,
+      String(CONFIG_SNAPSHOT_TTL_SECONDS)
+    );
     return result === 1;
   }
 
@@ -289,7 +302,7 @@ export async function publishCurrentPublicStatusConfigPointers(input: {
     return false;
   }
 
-  await redis.set(pointerKey, input.configVersion);
+  await redis.set(pointerKey, input.configVersion, "EX", CONFIG_SNAPSHOT_TTL_SECONDS);
   return true;
 }
 
