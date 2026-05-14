@@ -3,6 +3,7 @@ import { readCurrentInternalPublicStatusConfigSnapshot } from "./config-snapshot
 import { buildPublicStatusManifestKey, buildPublicStatusRebuildHintKey } from "./redis-contract";
 
 const REBUILD_HINT_TTL_SECONDS = 60 * 5;
+const GENERATION_PROJECTION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 interface RedisHintWriter {
   get(key: string): Promise<string | null> | string | null;
@@ -25,7 +26,9 @@ async function writeManifestPreservingTtl(
     return;
   }
 
-  await redis.set(key, value);
+  // Key has no TTL (pre-fix legacy key) or pttl unavailable — apply the
+  // standard projection TTL to prevent unbounded growth.
+  await redis.set(key, value, "EX", GENERATION_PROJECTION_TTL_SECONDS);
 }
 
 function getReadyRedisClient(redis?: RedisHintWriter | null): RedisHintWriter | null {

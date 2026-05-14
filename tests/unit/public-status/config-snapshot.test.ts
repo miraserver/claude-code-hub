@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { importPublicStatusModule } from "../../helpers/public-status-test-helpers";
 
-const CONFIG_SNAPSHOT_TTL_SECONDS = 60 * 60 * 24 * 7;
+const CONFIG_SNAPSHOT_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 type RedisMock = {
   set: ReturnType<typeof vi.fn>;

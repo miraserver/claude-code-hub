@@ -582,7 +582,9 @@ describe("public-status rebuild worker", () => {
     );
     expect(mockRedisSet).toHaveBeenCalledWith(
       "public-status:v1:manifest:current:5m:24h",
-      expect.stringContaining('"rebuildState":"rebuilding"')
+      expect.stringContaining('"rebuildState":"rebuilding"'),
+      "EX",
+      60 * 60 * 24 * 7
     );
   });
 });

@@ -73,7 +73,7 @@ interface RedisWriter {
   eval?(script: string, numKeys: number, ...args: string[]): Promise<unknown> | unknown;
 }
 
-const CONFIG_SNAPSHOT_TTL_SECONDS = 60 * 60 * 24 * 7;
+const CONFIG_SNAPSHOT_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 interface RedisReader {
   get(key: string): Promise<string | null> | string | null;
